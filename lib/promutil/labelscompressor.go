@@ -19,6 +19,12 @@ type LabelsCompressor struct {
 	nextIdx atomic.Uint64
 
 	totalSizeBytes atomic.Uint64
+	
+	// Maximum number of labels to keep in memory before evicting old ones
+	maxItems uint64
+	
+	// Mutex for coordinating eviction
+	evictionMu sync.Mutex
 }
 
 // SizeBytes returns the size of lc data in bytes

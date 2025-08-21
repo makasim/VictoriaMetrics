@@ -2,14 +2,13 @@ package promutil
 
 import (
 	"fmt"
-	"sync/atomic"
 	"testing"
 
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/prompb"
 )
 
-func BenchmarkLabelsCompressorCompress(b *testing.B) {
-	var lc LabelsCompressor
+func BenchmarkLabelsCompressorV2Compress(b *testing.B) {
+	var lc LabelsCompressorV2
 	series := newTestSeries(100, 10)
 
 	b.ReportAllocs()
@@ -27,8 +26,8 @@ func BenchmarkLabelsCompressorCompress(b *testing.B) {
 	})
 }
 
-func BenchmarkLabelsCompressorDecompress(b *testing.B) {
-	var lc LabelsCompressor
+func BenchmarkLabelsCompressorV2Decompress(b *testing.B) {
+	var lc LabelsCompressorV2
 	series := newTestSeries(100, 10)
 	datas := make([][]byte, len(series))
 	var dst []byte
@@ -52,8 +51,8 @@ func BenchmarkLabelsCompressorDecompress(b *testing.B) {
 	})
 }
 
-func BenchmarkLabelsCompressor10M(b *testing.B) {
-	var lc LabelsCompressor
+func BenchmarkLabelsCompressorV210M(b *testing.B) {
+	var lc LabelsCompressorV2
 
 	for i := 0; i < 100_000; i++ {
 		labels := []prompb.Label{
@@ -70,7 +69,7 @@ func BenchmarkLabelsCompressor10M(b *testing.B) {
 	}
 
 	series := newTestSeries(100, 10)
-
+	
 	b.ReportAllocs()
 	b.SetBytes(int64(len(series)))
 
@@ -85,5 +84,3 @@ func BenchmarkLabelsCompressor10M(b *testing.B) {
 		}
 	})
 }
-
-var Sink atomic.Uint64
