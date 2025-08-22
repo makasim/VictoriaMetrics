@@ -23,6 +23,9 @@ type currPrevMaps struct {
 
 type LabelsCompressor struct {
 	currPrevMaps atomic.Pointer[currPrevMaps]
+
+	totalSizeBytes atomic.Uint64
+	totalItems     atomic.Uint64
 }
 
 func NewLabelsCompressorV2() *LabelsCompressor {
@@ -33,6 +36,16 @@ func NewLabelsCompressorV2() *LabelsCompressor {
 	})
 	go lc.cleanupLoop()
 	return lc
+}
+
+// SizeBytes returns the size of lc data in bytes
+func (lc *LabelsCompressor) SizeBytes() uint64 {
+	return uint64(unsafe.Sizeof(*lc)) + lc.totalSizeBytes.Load()
+}
+
+// ItemsCount returns the number of items in lc
+func (lc *LabelsCompressor) ItemsCount() uint64 {
+	return lc.totalItems.Load()
 }
 
 func (lc *LabelsCompressor) Compress(dst []byte, labels []prompb.Label) []byte {
@@ -67,19 +80,33 @@ func (lc *LabelsCompressor) compress(dst []uint64, labels []prompb.Label) {
 	idxToLabels, _ := lc.maps()
 
 	_ = dst[len(labels)-1]
-	for i := range labels {
-		bb.Reset()
-		bb.Write(s2b(labels[i].Name))
-		bb.Write([]byte(`=`))
-		bb.Write(s2b(labels[i].Value))
-		id := xxhash.Sum64(bb.B)
 
-		if _, ok := idxToLabels.Get(id); !ok {
-			labelCopy := cloneLabel(labels[i])
-			idxToLabels.Set(id, labelCopy)
+	var totalSizeBytes, totalItems uint64
+	for i, label := range labels {
+		bb.Reset()
+		bb.Write(s2b(label.Name))
+		bb.Write([]byte(`=`))
+		bb.Write(s2b(label.Value))
+		idx := xxhash.Sum64(bb.B)
+
+		if _, ok := idxToLabels.Get(idx); !ok {
+			labelCopy := cloneLabel(label)
+			idxToLabels.Set(idx, labelCopy)
+
+			// Update lc.totalSizeBytes
+			labelSizeBytes := uint64(len(label.Name) + len(label.Value))
+			entrySizeBytes := labelSizeBytes + uint64(2*(unsafe.Sizeof(label)+unsafe.Sizeof(&label))+unsafe.Sizeof(label))
+			totalSizeBytes += entrySizeBytes
+
+			totalItems += 1
 		}
 
-		dst[i] = id
+		dst[i] = idx
+	}
+
+	if totalItems > 0 {
+		lc.totalSizeBytes.Add(totalSizeBytes)
+		lc.totalItems.Add(totalItems)
 	}
 }
 
@@ -158,11 +185,27 @@ func (lc *LabelsCompressor) cleanupLoop() {
 }
 
 func (lc *LabelsCompressor) cleanup() {
-	idxToLabels, _ := lc.maps()
+	idxToLabels, prevIdxToLabels := lc.maps()
 	lc.currPrevMaps.Store(&currPrevMaps{
 		idxToLabels:     haxmap.New[uint64, prompb.Label](1e6),
 		prevIdxToLabels: idxToLabels,
 	})
+
+	var totalSizeBytes, totalItems uint64
+	prevIdxToLabels.ForEach(func(idx uint64, label prompb.Label) bool {
+		// Update lc.totalSizeBytes
+		labelSizeBytes := uint64(len(label.Name) + len(label.Value))
+		entrySizeBytes := labelSizeBytes + uint64(2*(unsafe.Sizeof(label)+unsafe.Sizeof(&label))+unsafe.Sizeof(label))
+		totalSizeBytes += entrySizeBytes
+
+		totalItems += 1
+		return true
+	})
+
+	if totalItems > 0 {
+		lc.totalSizeBytes.Add(-totalSizeBytes)
+		lc.totalItems.Add(-totalItems)
+	}
 }
 
 func (lc *LabelsCompressor) maps() (*haxmap.Map[uint64, prompb.Label], *haxmap.Map[uint64, prompb.Label]) {
