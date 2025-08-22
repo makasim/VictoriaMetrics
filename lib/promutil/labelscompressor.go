@@ -2,7 +2,6 @@ package promutil
 
 import (
 	"reflect"
-	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -23,16 +22,7 @@ type currPrevMaps struct {
 }
 
 type LabelsCompressor struct {
-	mux sync.Mutex
-	//nextIdx atomic.Uint64
-
 	currPrevMaps atomic.Pointer[currPrevMaps]
-
-	//idxToLabels     atomic.Pointer[sync.Map] // map[uint64]prompb.Label
-	//prevIdxToLabels atomic.Pointer[sync.Map] // map[uint64]prompb.Label
-	//idToLabels sync.Map // map[uint64]*prompb.Label
-
-	//prevIdToLabels map[uint64]*prompb.Label
 }
 
 func NewLabelsCompressorV2() *LabelsCompressor {
@@ -64,16 +54,6 @@ func (lc *LabelsCompressor) compress(dst []uint64, labels []prompb.Label) {
 		return
 	}
 
-	//rLocked := true
-	//lc.mux.RLock()
-	//defer func() {
-	//	if rLocked {
-	//		lc.mux.RUnlock()
-	//	} else {
-	//		lc.mux.Unlock()
-	//	}
-	//}()
-
 	var maxSize int
 	for i := range labels {
 		maxSize = max(maxSize, len(labels[i].Name)+len(labels[i].Value))
@@ -95,25 +75,8 @@ func (lc *LabelsCompressor) compress(dst []uint64, labels []prompb.Label) {
 		id := xxhash.Sum64(bb.B)
 
 		if _, ok := idxToLabels.Get(id); !ok {
-			//if rLocked {
-			//	lc.mux.RUnlock()
-			//	lc.mux.Lock()
-			//	rLocked = false
-			//}
-			//if lc.labelsToId == nil {
-			//	lc.labelsToId = make(map[prompb.Label]uint64)
-			//}
-			//if lc.idToLabels == nil {
-			//	lc.idToLabels = make(map[uint64]*prompb.Label)
-			//}
-			//
-			//idx := lc.nextIdx.Add(1)
-			lc.mux.Lock()
-			if _, ok = idxToLabels.Get(id); !ok {
-				labelCopy := cloneLabel(labels[i])
-				idxToLabels.Set(id, labelCopy)
-			}
-			lc.mux.Unlock()
+			labelCopy := cloneLabel(labels[i])
+			idxToLabels.Set(id, labelCopy)
 		}
 
 		dst[i] = id
@@ -170,15 +133,12 @@ func (lc *LabelsCompressor) decompress(dst []prompb.Label, src []uint64) []promp
 	for _, idx := range src {
 		label0, ok := idxToLabels.Get(idx)
 		if !ok {
-			lc.mux.Lock()
 			var ok bool
 			label0, ok = prevIdxToLabels.Get(idx)
 			if !ok {
-				lc.mux.Unlock()
 				logger.Panicf("BUG: missing label for idx=%d", idx)
 			}
 			idxToLabels.Set(idx, label0)
-			lc.mux.Unlock()
 		}
 		dst = append(dst, label0)
 	}
@@ -198,9 +158,6 @@ func (lc *LabelsCompressor) cleanupLoop() {
 }
 
 func (lc *LabelsCompressor) cleanup() {
-	lc.mux.Lock()
-	defer lc.mux.Unlock()
-
 	idxToLabels, _ := lc.maps()
 	lc.currPrevMaps.Store(&currPrevMaps{
 		idxToLabels:     haxmap.New[uint64, prompb.Label](1e6),
