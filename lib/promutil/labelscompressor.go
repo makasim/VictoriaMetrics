@@ -193,6 +193,10 @@ func (lc *LabelsCompressor) cleanup() {
 
 	var totalSizeBytes, totalItems uint64
 	prevIdxToLabels.ForEach(func(idx uint64, label prompb.Label) bool {
+		if _, loaded := idxToLabels.Get(idx); loaded {
+			return true
+		}
+
 		// Update lc.totalSizeBytes
 		labelSizeBytes := uint64(len(label.Name) + len(label.Value))
 		entrySizeBytes := labelSizeBytes + uint64(2*(unsafe.Sizeof(label)+unsafe.Sizeof(&label))+unsafe.Sizeof(label))
