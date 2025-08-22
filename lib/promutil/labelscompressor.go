@@ -192,8 +192,12 @@ func (lc *LabelsCompressor) cleanup() {
 	})
 
 	var totalSizeBytes, totalItems uint64
-	prevIdxToLabels.Range(func(k, v interface{}) bool {
-		label := v.(prompb.Label)
+	prevIdxToLabels.Range(func(idx, label0 interface{}) bool {
+		if _, loaded := idxToLabels.Load(idx); loaded {
+			return true
+		}
+
+		label := label0.(prompb.Label)
 
 		// Update lc.totalSizeBytes
 		labelSizeBytes := uint64(len(label.Name) + len(label.Value))
