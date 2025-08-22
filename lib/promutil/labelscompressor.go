@@ -11,14 +11,15 @@ import (
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/encoding"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/logger"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/prompb"
+	"github.com/alphadose/haxmap"
 	"github.com/cespare/xxhash/v2"
 )
 
 var hashBBP = bytesutil.ByteBufferPool{}
 
 type currPrevMaps struct {
-	idxToLabels     *sync.Map // map[uint64]prompb.Label
-	prevIdxToLabels *sync.Map // map[uint64]prompb.Label
+	idxToLabels     *haxmap.Map[uint64, prompb.Label] // map[uint64]prompb.Label
+	prevIdxToLabels *haxmap.Map[uint64, prompb.Label] // map[uint64]prompb.Label
 }
 
 type LabelsCompressor struct {
@@ -37,8 +38,8 @@ type LabelsCompressor struct {
 func NewLabelsCompressorV2() *LabelsCompressor {
 	lc := &LabelsCompressor{}
 	lc.currPrevMaps.Store(&currPrevMaps{
-		idxToLabels:     &sync.Map{},
-		prevIdxToLabels: &sync.Map{},
+		idxToLabels:     haxmap.New[uint64, prompb.Label](1e6),
+		prevIdxToLabels: haxmap.New[uint64, prompb.Label](1e6),
 	})
 	go lc.cleanupLoop()
 	return lc
@@ -91,7 +92,7 @@ func (lc *LabelsCompressor) compress(dst []uint64, labels []prompb.Label) {
 		bb.Write(s2b(labels[i].Value))
 		id := xxhash.Sum64(bb.B)
 
-		if _, ok := idxToLabels.Load(id); !ok {
+		if _, ok := idxToLabels.Get(id); !ok {
 			//if rLocked {
 			//	lc.mux.RUnlock()
 			//	lc.mux.Lock()
@@ -106,9 +107,9 @@ func (lc *LabelsCompressor) compress(dst []uint64, labels []prompb.Label) {
 			//
 			//idx := lc.nextIdx.Add(1)
 			lc.mux.Lock()
-			if _, ok = idxToLabels.Load(id); !ok {
+			if _, ok = idxToLabels.Get(id); !ok {
 				labelCopy := cloneLabel(labels[i])
-				idxToLabels.Store(id, labelCopy)
+				idxToLabels.Set(id, labelCopy)
 			}
 			lc.mux.Unlock()
 		}
@@ -165,19 +166,19 @@ func (lc *LabelsCompressor) decompress(dst []prompb.Label, src []uint64) []promp
 	idxToLabels, prevIdxToLabels := lc.maps()
 
 	for _, idx := range src {
-		label0, ok := idxToLabels.Load(idx)
+		label0, ok := idxToLabels.Get(idx)
 		if !ok {
 			lc.mux.Lock()
 			var ok bool
-			label0, ok = prevIdxToLabels.Load(idx)
+			label0, ok = prevIdxToLabels.Get(idx)
 			if !ok {
 				lc.mux.Unlock()
 				logger.Panicf("BUG: missing label for idx=%d", idx)
 			}
-			idxToLabels.Store(idx, label0)
+			idxToLabels.Set(idx, label0)
 			lc.mux.Unlock()
 		}
-		dst = append(dst, label0.(prompb.Label))
+		dst = append(dst, label0)
 	}
 	return dst
 }
@@ -200,12 +201,12 @@ func (lc *LabelsCompressor) cleanup() {
 
 	idxToLabels, _ := lc.maps()
 	lc.currPrevMaps.Store(&currPrevMaps{
-		idxToLabels:     &sync.Map{},
+		idxToLabels:     haxmap.New[uint64, prompb.Label](1e6),
 		prevIdxToLabels: idxToLabels,
 	})
 }
 
-func (lc *LabelsCompressor) maps() (*sync.Map, *sync.Map) {
+func (lc *LabelsCompressor) maps() (*haxmap.Map[uint64, prompb.Label], *haxmap.Map[uint64, prompb.Label]) {
 	maps := lc.currPrevMaps.Load()
 	return maps.idxToLabels, maps.prevIdxToLabels
 }

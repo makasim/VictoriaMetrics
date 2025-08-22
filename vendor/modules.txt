@@ -152,6 +152,9 @@ github.com/VividCortex/ewma
 # github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b
 ## explicit; go 1.15
 github.com/alecthomas/units
+# github.com/alphadose/haxmap v1.4.1
+## explicit; go 1.18
+github.com/alphadose/haxmap
 # github.com/aws/aws-sdk-go-v2 v1.37.1 => github.com/aws/aws-sdk-go-v2 v1.32.8
 ## explicit; go 1.21
 github.com/aws/aws-sdk-go-v2/aws
