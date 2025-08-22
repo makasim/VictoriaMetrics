@@ -16,12 +16,19 @@ import (
 
 var hashBBP = bytesutil.ByteBufferPool{}
 
+type currPrevMaps struct {
+	idxToLabels     *sync.Map // map[uint64]prompb.Label
+	prevIdxToLabels *sync.Map // map[uint64]prompb.Label
+}
+
 type LabelsCompressor struct {
 	mux sync.Mutex
 	//nextIdx atomic.Uint64
 
-	idxToLabels     atomic.Pointer[sync.Map] // map[uint64]prompb.Label
-	prevIdxToLabels atomic.Pointer[sync.Map] // map[uint64]prompb.Label
+	currPrevMaps atomic.Pointer[currPrevMaps]
+
+	//idxToLabels     atomic.Pointer[sync.Map] // map[uint64]prompb.Label
+	//prevIdxToLabels atomic.Pointer[sync.Map] // map[uint64]prompb.Label
 	//idToLabels sync.Map // map[uint64]*prompb.Label
 
 	//prevIdToLabels map[uint64]*prompb.Label
@@ -29,8 +36,10 @@ type LabelsCompressor struct {
 
 func NewLabelsCompressorV2() *LabelsCompressor {
 	lc := &LabelsCompressor{}
-	lc.idxToLabels.Store(&sync.Map{})
-	lc.prevIdxToLabels.Store(&sync.Map{})
+	lc.currPrevMaps.Store(&currPrevMaps{
+		idxToLabels:     &sync.Map{},
+		prevIdxToLabels: &sync.Map{},
+	})
 	go lc.cleanupLoop()
 	return lc
 }
@@ -73,7 +82,7 @@ func (lc *LabelsCompressor) compress(dst []uint64, labels []prompb.Label) {
 	defer hashBBP.Put(bb)
 	bb.Grow(maxSize)
 
-	idxToLabels := lc.idxToLabels.Load()
+	idxToLabels, _ := lc.maps()
 
 	_ = dst[len(labels)-1]
 	for i := range labels {
@@ -153,8 +162,7 @@ func (lc *LabelsCompressor) Decompress(dst []prompb.Label, src []byte) []prompb.
 }
 
 func (lc *LabelsCompressor) decompress(dst []prompb.Label, src []uint64) []prompb.Label {
-	idxToLabels := lc.idxToLabels.Load()
-	prevIdxToLabels := lc.prevIdxToLabels.Load()
+	idxToLabels, prevIdxToLabels := lc.maps()
 
 	for _, idx := range src {
 		label0, ok := idxToLabels.Load(idx)
@@ -190,9 +198,16 @@ func (lc *LabelsCompressor) cleanup() {
 	lc.mux.Lock()
 	defer lc.mux.Unlock()
 
-	idxToLabels := lc.idxToLabels.Load()
-	lc.prevIdxToLabels.Store(idxToLabels)
-	lc.idxToLabels.Store(&sync.Map{})
+	idxToLabels, _ := lc.maps()
+	lc.currPrevMaps.Store(&currPrevMaps{
+		idxToLabels:     &sync.Map{},
+		prevIdxToLabels: idxToLabels,
+	})
+}
+
+func (lc *LabelsCompressor) maps() (*sync.Map, *sync.Map) {
+	maps := lc.currPrevMaps.Load()
+	return maps.idxToLabels, maps.prevIdxToLabels
 }
 
 func s2b(s string) (b []byte) {

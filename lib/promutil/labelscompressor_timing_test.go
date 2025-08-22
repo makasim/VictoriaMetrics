@@ -52,10 +52,15 @@ func BenchmarkLabelsCompressorDecompress(b *testing.B) {
 	})
 }
 
-func BenchmarkPreload1MLabelsCompressorCompress(b *testing.B) {
+func BenchmarkPreload100kLabelsCompressorCompress(b *testing.B) {
 	lc := NewLabelsCompressorV2()
 
-	for i := 0; i < 1_000_000; i++ {
+	var dst []byte
+	var labels []prompb.Label
+	for i := 0; i < 100_000; i++ {
+		dst = dst[:0]
+		labels = labels[:0]
+
 		labels := []prompb.Label{
 			{
 				Name:  "instance",
@@ -66,7 +71,7 @@ func BenchmarkPreload1MLabelsCompressorCompress(b *testing.B) {
 				Value: fmt.Sprintf("pod%d", i),
 			},
 		}
-		lc.Compress(nil, labels)
+		lc.Decompress(labels, lc.Compress(dst, labels))
 	}
 
 	series := newTestSeries(100, 10)
@@ -86,10 +91,15 @@ func BenchmarkPreload1MLabelsCompressorCompress(b *testing.B) {
 	})
 }
 
-func BenchmarkPreload1MLabelsCompressorDecompress(b *testing.B) {
+func BenchmarkPreload100kLabelsCompressorDecompress(b *testing.B) {
 	lc := NewLabelsCompressorV2()
 
-	for i := 0; i < 1_000_000; i++ {
+	var dst []byte
+	var labels []prompb.Label
+	for i := 0; i < 100_000; i++ {
+		dst = dst[:0]
+		labels = labels[:0]
+
 		labels := []prompb.Label{
 			{
 				Name:  "instance",
@@ -100,12 +110,12 @@ func BenchmarkPreload1MLabelsCompressorDecompress(b *testing.B) {
 				Value: fmt.Sprintf("pod%d", i),
 			},
 		}
-		lc.Compress(nil, labels)
+		lc.Decompress(labels, lc.Compress(dst, labels))
 	}
 
 	series := newTestSeries(100, 10)
 	datas := make([][]byte, len(series))
-	var dst []byte
+	dst = dst[:0]
 	for i, labels := range series {
 		dstLen := len(dst)
 		dst = lc.Compress(dst, labels)
