@@ -78,6 +78,7 @@ func (lc *LabelsCompressor) compress(dst []uint64, labels []prompb.Label) {
 	for i := range labels {
 		maxSize = max(maxSize, len(labels[i].Name)+len(labels[i].Value))
 	}
+	maxSize += 1 // for '='
 
 	bb := hashBBP.Get()
 	defer hashBBP.Put(bb)
@@ -89,6 +90,7 @@ func (lc *LabelsCompressor) compress(dst []uint64, labels []prompb.Label) {
 	for i := range labels {
 		bb.Reset()
 		bb.Write(s2b(labels[i].Name))
+		bb.Write([]byte(`=`))
 		bb.Write(s2b(labels[i].Value))
 		id := xxhash.Sum64(bb.B)
 
