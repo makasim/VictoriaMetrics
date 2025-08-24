@@ -1,6 +1,7 @@
 package promutil
 
 import (
+	"encoding/binary"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -77,22 +78,15 @@ func (lc *LabelsCompressor) compress(dst []uint64, labels []prompb.Label) {
 	defer hashBBP.Put(bb)
 	bb.Grow(maxSize)
 
-	idxToLabels, _ := lc.maps()
+	idxToLabels, prevIdxToLabels := lc.maps()
 
 	_ = dst[len(labels)-1]
 
 	var totalSizeBytes, totalItems uint64
 	for i, label := range labels {
-		bb.Reset()
-		bb.Write(s2b(label.Name))
-		bb.Write([]byte(`=`))
-		bb.Write(s2b(label.Value))
-		idx := xxhash.Sum64(bb.B)
-
-		if _, ok := idxToLabels.Load(idx); !ok {
-			labelCopy := cloneLabel(label)
-			idxToLabels.Store(idx, labelCopy)
-
+		var loaded bool
+		dst[i], loaded = lc.compressLabel(label, idxToLabels, prevIdxToLabels, bb)
+		if !loaded {
 			// Update lc.totalSizeBytes
 			labelSizeBytes := uint64(len(label.Name) + len(label.Value))
 			entrySizeBytes := labelSizeBytes + uint64(2*(unsafe.Sizeof(label)+unsafe.Sizeof(&label))+unsafe.Sizeof(label))
@@ -100,14 +94,53 @@ func (lc *LabelsCompressor) compress(dst []uint64, labels []prompb.Label) {
 
 			totalItems += 1
 		}
-
-		dst[i] = idx
 	}
 
 	if totalItems > 0 {
 		lc.totalSizeBytes.Add(totalSizeBytes)
 		lc.totalItems.Add(totalItems)
 	}
+}
+
+func (lc *LabelsCompressor) compressLabel(label prompb.Label, idxToLabels, prevIdxToLabels *sync.Map, bb *bytesutil.ByteBuffer) (uint64, bool) {
+	for collisionIdx := 0; collisionIdx < 10; collisionIdx++ {
+		bb.Reset()
+		bb.Write(s2b(label.Name))
+		bb.Write([]byte(`=`))
+		bb.B = binary.AppendVarint(bb.B, int64(collisionIdx))
+		bb.Write([]byte(`=`))
+		bb.Write(s2b(label.Value))
+
+		idx := xxhash.Sum64(bb.B)
+
+		storedLabel0, ok := idxToLabels.Load(idx)
+		//fast path
+		if ok {
+			storedLabel := storedLabel0.(prompb.Label)
+			// hash collision detected
+			if storedLabel.Name != label.Name || storedLabel.Value != label.Value {
+				continue
+			}
+
+			return idx, true
+		}
+
+		if prevStoredLabel0, ok := prevIdxToLabels.Load(idx); ok {
+			prevStoredLabel := prevStoredLabel0.(prompb.Label)
+			if prevStoredLabel.Name != label.Name || prevStoredLabel.Value != label.Value {
+				continue
+			}
+		}
+
+		labelCopy := cloneLabel(label)
+
+		// hash collision is possible here in theory but I doubt it happens in practice
+		idxToLabels.Store(idx, labelCopy)
+
+		return idx, false
+	}
+
+	panic("FATAL: too many hash collisions detected")
 }
 
 func cloneLabel(label prompb.Label) prompb.Label {
