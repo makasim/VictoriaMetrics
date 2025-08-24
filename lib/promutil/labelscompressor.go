@@ -32,8 +32,8 @@ type LabelsCompressor struct {
 func NewLabelsCompressor() *LabelsCompressor {
 	lc := &LabelsCompressor{}
 	lc.currPrevMaps.Store(&currPrevMaps{
-		idxToLabels:     haxmap.New[uint64, prompb.Label](1e6),
-		prevIdxToLabels: haxmap.New[uint64, prompb.Label](1e6),
+		idxToLabels:     haxmap.New[uint64, prompb.Label](),
+		prevIdxToLabels: haxmap.New[uint64, prompb.Label](),
 	})
 	go lc.cleanupLoop()
 	return lc
@@ -218,7 +218,7 @@ func (lc *LabelsCompressor) cleanupLoop() {
 func (lc *LabelsCompressor) cleanup() {
 	idxToLabels, prevIdxToLabels := lc.maps()
 	lc.currPrevMaps.Store(&currPrevMaps{
-		idxToLabels:     haxmap.New[uint64, prompb.Label](1e6),
+		idxToLabels:     haxmap.New[uint64, prompb.Label](),
 		prevIdxToLabels: idxToLabels,
 	})
 
