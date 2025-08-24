@@ -9,7 +9,7 @@ import (
 )
 
 func TestLabelsCompressorSerial(t *testing.T) {
-	lc := NewLabelsCompressorV2()
+	lc := NewLabelsCompressor()
 
 	f := func(labels []prompb.Label) {
 		t.Helper()
@@ -67,7 +67,7 @@ func TestLabelsCompressorSerial(t *testing.T) {
 
 func TestLabelsCompressorConcurrent(t *testing.T) {
 	const concurrency = 5
-	lc := NewLabelsCompressorV2()
+	lc := NewLabelsCompressor()
 	var expectCompressedKeys sync.Map
 
 	var wg sync.WaitGroup
