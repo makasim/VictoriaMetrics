@@ -8,7 +8,32 @@ import (
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/prompb"
 )
 
-func BenchmarkLabelsCompressorCompress(b *testing.B) {
+func BenchmarkLabelsCompressorCompressFastPath(b *testing.B) {
+	lc := NewLabelsCompressor()
+	series := newTestSeries(100, 10)
+
+	var dst []byte
+	for _, labels := range series {
+		dst = dst[:0]
+		dst = lc.Compress(dst, labels)
+	}
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(series)))
+
+	b.RunParallel(func(pb *testing.PB) {
+		var dst []byte
+		for pb.Next() {
+			dst = dst[:0]
+			for _, labels := range series {
+				dst = lc.Compress(dst, labels)
+			}
+			Sink.Add(uint64(len(dst)))
+		}
+	})
+}
+
+func BenchmarkLabelsCompressorCompressSlowPath(b *testing.B) {
 	lc := NewLabelsCompressor()
 	series := newTestSeries(100, 10)
 
