@@ -34,7 +34,7 @@ func BenchmarkLabelsCompressorCompressFastPath(b *testing.B) {
 }
 
 func BenchmarkLabelsCompressorCompressSlowPath(b *testing.B) {
-	series := newTestSeries(100, 10)
+	series := newTestSeries(3, 10)
 
 	b.ReportAllocs()
 	b.SetBytes(int64(len(series)))
@@ -99,7 +99,7 @@ func BenchmarkPreload100kLabelsCompressorCompress(b *testing.B) {
 		lc.Decompress(labels, lc.Compress(dst, labels))
 	}
 
-	series := newTestSeries(100, 10)
+	series := newTestSeries(10, 10)
 
 	b.ReportAllocs()
 	b.SetBytes(int64(len(series)))
@@ -138,7 +138,7 @@ func BenchmarkPreload100kLabelsCompressorDecompress(b *testing.B) {
 		lc.Decompress(labels, lc.Compress(dst, labels))
 	}
 
-	series := newTestSeries(100, 10)
+	series := newTestSeries(10, 10)
 	datas := make([][]byte, len(series))
 	dst = dst[:0]
 	for i, labels := range series {
