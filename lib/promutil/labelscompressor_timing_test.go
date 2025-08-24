@@ -34,22 +34,20 @@ func BenchmarkLabelsCompressorCompressFastPath(b *testing.B) {
 }
 
 func BenchmarkLabelsCompressorCompressSlowPath(b *testing.B) {
-	series := newTestSeries(3, 10)
+	series := newTestSeries(100, 10)
 
 	b.ReportAllocs()
 	b.SetBytes(int64(len(series)))
 
-	b.RunParallel(func(pb *testing.PB) {
+	for b.Loop() {
 		var dst []byte
-		for pb.Next() {
-			lc := NewLabelsCompressor()
-			dst = dst[:0]
-			for _, labels := range series {
-				dst = lc.Compress(dst, labels)
-			}
-			Sink.Add(uint64(len(dst)))
+		lc := NewLabelsCompressor()
+		dst = dst[:0]
+		for _, labels := range series {
+			dst = lc.Compress(dst, labels)
 		}
-	})
+		Sink.Add(uint64(len(dst)))
+	}
 }
 
 func BenchmarkLabelsCompressorDecompress(b *testing.B) {
