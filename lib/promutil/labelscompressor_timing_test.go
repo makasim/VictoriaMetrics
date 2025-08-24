@@ -9,7 +9,7 @@ import (
 )
 
 func BenchmarkLabelsCompressorCompress(b *testing.B) {
-	lc := NewLabelsCompressorV2()
+	lc := NewLabelsCompressor()
 	series := newTestSeries(100, 10)
 
 	b.ReportAllocs()
@@ -28,7 +28,7 @@ func BenchmarkLabelsCompressorCompress(b *testing.B) {
 }
 
 func BenchmarkLabelsCompressorDecompress(b *testing.B) {
-	lc := NewLabelsCompressorV2()
+	lc := NewLabelsCompressor()
 	series := newTestSeries(100, 10)
 	datas := make([][]byte, len(series))
 	var dst []byte
@@ -53,7 +53,7 @@ func BenchmarkLabelsCompressorDecompress(b *testing.B) {
 }
 
 func BenchmarkPreload100kLabelsCompressorCompress(b *testing.B) {
-	lc := NewLabelsCompressorV2()
+	lc := NewLabelsCompressor()
 
 	var dst []byte
 	var labels []prompb.Label
@@ -92,7 +92,7 @@ func BenchmarkPreload100kLabelsCompressorCompress(b *testing.B) {
 }
 
 func BenchmarkPreload100kLabelsCompressorDecompress(b *testing.B) {
-	lc := NewLabelsCompressorV2()
+	lc := NewLabelsCompressor()
 
 	var dst []byte
 	var labels []prompb.Label

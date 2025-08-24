@@ -28,7 +28,7 @@ type LabelsCompressor struct {
 	totalItems     atomic.Uint64
 }
 
-func NewLabelsCompressorV2() *LabelsCompressor {
+func NewLabelsCompressor() *LabelsCompressor {
 	lc := &LabelsCompressor{}
 	lc.currPrevMaps.Store(&currPrevMaps{
 		idxToLabels:     &sync.Map{},
