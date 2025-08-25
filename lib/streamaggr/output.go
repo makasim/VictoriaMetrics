@@ -120,6 +120,7 @@ func (ao *aggrOutputs) flushState(ctx *flushCtx) {
 		}
 		return true
 	})
+	fmt.Printf("flushState: %d in %s\n", l, time.Since(start))
 }
 
 type aggrValues struct {
