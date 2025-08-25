@@ -1,7 +1,9 @@
 package streamaggr
 
 import (
+	"fmt"
 	"sync"
+	time "time"
 
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/bytesutil"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/encoding"
@@ -91,6 +93,7 @@ func (ao *aggrOutputs) pushSamples(samples []pushSample, deleteDeadline int64, i
 func (ao *aggrOutputs) flushState(ctx *flushCtx) {
 	m := &ao.m
 	var outputs []aggrValue
+	start := time.Now()
 	m.Range(func(k, v any) bool {
 		// Atomically delete the entry from the map, so new entry is created for the next flush.
 		av := v.(*aggrValues)
@@ -120,7 +123,7 @@ func (ao *aggrOutputs) flushState(ctx *flushCtx) {
 		}
 		return true
 	})
-	fmt.Printf("flushState: %d in %s\n", l, time.Since(start))
+	fmt.Printf("flushState: in %s\n", time.Since(start))
 }
 
 type aggrValues struct {
