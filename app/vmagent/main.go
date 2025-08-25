@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/stats"
 	"github.com/VictoriaMetrics/metrics"
 
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmagent/csvimport"
@@ -98,6 +99,14 @@ var (
 )
 
 func main() {
+	go func() {
+		for {
+			m := stats.Measure()
+			time.Sleep(time.Minute)
+			m()
+		}
+	}()
+
 	// vmagent is optimized for reduced memory allocations,
 	// so it can run with the reduced GOGC in order to reduce the used memory,
 	// while keeping CPU usage spent in GC at low levels.
