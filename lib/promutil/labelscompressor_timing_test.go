@@ -51,111 +51,88 @@ func BenchmarkLabelsCompressorCompressSlowPath(b *testing.B) {
 }
 
 func BenchmarkLabelsCompressorDecompress(b *testing.B) {
-	lc := NewLabelsCompressor()
-	series := newTestSeries(100, 10)
-	datas := make([][]byte, len(series))
-	var dst []byte
-	for i, labels := range series {
-		dstLen := len(dst)
-		dst = lc.Compress(dst, labels)
-		datas[i] = dst[dstLen:]
-	}
+	f := func(b *testing.B, preload, postload int) {
+		lc := NewLabelsCompressor()
 
-	b.ReportAllocs()
-	b.SetBytes(int64(len(series)))
-
-	b.RunParallel(func(pb *testing.PB) {
 		var labels []prompb.Label
-		for pb.Next() {
-			for _, data := range datas {
-				labels = lc.Decompress(labels[:0], data)
+
+		var preloadDst []byte
+		for i := 0; i < preload; i++ {
+			preloadDst = preloadDst[:0]
+			labels = labels[:0]
+
+			labels := []prompb.Label{
+				{
+					Name:  "instance00",
+					Value: fmt.Sprintf("preload00%d", i),
+				},
+				{
+					Name:  "job1111111",
+					Value: fmt.Sprintf("preload11%d", i),
+				},
 			}
-			Sink.Add(uint64(len(labels)))
+			lc.Decompress(labels, lc.Compress(preloadDst, labels))
 		}
-	})
-}
 
-func BenchmarkPreload100kLabelsCompressorCompress(b *testing.B) {
-	lc := NewLabelsCompressor()
-
-	var dst []byte
-	var labels []prompb.Label
-	for i := 0; i < 100_000; i++ {
-		dst = dst[:0]
-		labels = labels[:0]
-
-		labels := []prompb.Label{
-			{
-				Name:  "instance",
-				Value: fmt.Sprintf("1.2.3.%d", i),
-			},
-			{
-				Name:  "job",
-				Value: fmt.Sprintf("pod%d", i),
-			},
-		}
-		lc.Decompress(labels, lc.Compress(dst, labels))
-	}
-
-	series := newTestSeries(10, 10)
-
-	b.ReportAllocs()
-	b.SetBytes(int64(len(series)))
-
-	b.RunParallel(func(pb *testing.PB) {
+		series := newTestSeries(100, 10)
+		datas := make([][]byte, len(series))
 		var dst []byte
-		for pb.Next() {
-			dst = dst[:0]
-			for _, labels := range series {
-				dst = lc.Compress(dst, labels)
-			}
-			Sink.Add(uint64(len(dst)))
+		for i, labels := range series {
+			dstLen := len(dst)
+			dst = lc.Compress(dst, labels)
+			datas[i] = dst[dstLen:]
 		}
+
+		var postloadDst []byte
+		for i := 0; i < postload; i++ {
+			postloadDst = postloadDst[:0]
+			labels = labels[:0]
+
+			labels := []prompb.Label{
+				{
+					Name:  "instance22",
+					Value: fmt.Sprintf("postload2%d", i),
+				},
+				{
+					Name:  "job3333333",
+					Value: fmt.Sprintf("postload3%d", i),
+				},
+			}
+			lc.Decompress(labels, lc.Compress(postloadDst, labels))
+		}
+
+		b.ReportAllocs()
+		b.SetBytes(int64(len(series)))
+
+		b.RunParallel(func(pb *testing.PB) {
+			var labels []prompb.Label
+			for pb.Next() {
+				for _, data := range datas {
+					labels = lc.Decompress(labels[:0], data)
+				}
+				Sink.Add(uint64(len(labels)))
+			}
+		})
+	}
+
+	b.Run("Preload0", func(b *testing.B) {
+		f(b, 0, 0)
 	})
-}
 
-func BenchmarkPreload100kLabelsCompressorDecompress(b *testing.B) {
-	lc := NewLabelsCompressor()
+	b.Run("Preload50k", func(b *testing.B) {
+		f(b, 25000, 25000)
+	})
 
-	var dst []byte
-	var labels []prompb.Label
-	for i := 0; i < 100_000; i++ {
-		dst = dst[:0]
-		labels = labels[:0]
+	b.Run("Preload100k", func(b *testing.B) {
+		f(b, 50000, 50000)
+	})
 
-		labels := []prompb.Label{
-			{
-				Name:  "instance",
-				Value: fmt.Sprintf("1.2.3.%d", i),
-			},
-			{
-				Name:  "job",
-				Value: fmt.Sprintf("pod%d", i),
-			},
-		}
-		lc.Decompress(labels, lc.Compress(dst, labels))
-	}
+	b.Run("Preload200k", func(b *testing.B) {
+		f(b, 100000, 100000)
+	})
 
-	series := newTestSeries(10, 10)
-	datas := make([][]byte, len(series))
-	dst = dst[:0]
-	for i, labels := range series {
-		dstLen := len(dst)
-		dst = lc.Compress(dst, labels)
-		datas[i] = dst[dstLen:]
-	}
-
-	b.ReportAllocs()
-	b.SetBytes(int64(len(series)))
-
-	b.RunParallel(func(pb *testing.PB) {
-		var labels []prompb.Label
-		for pb.Next() {
-			for _, data := range datas {
-				labels = lc.Decompress(labels[:0], data)
-			}
-			Sink.Add(uint64(len(labels)))
-		}
+	b.Run("Preload300k", func(b *testing.B) {
+		f(b, 150000, 150000)
 	})
 }
 
