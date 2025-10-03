@@ -1,18 +1,25 @@
 package netstorage
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/relabel"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/bytesutil"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/consts"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/encoding"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/httpserver"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/memory"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/prompb"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/storage"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/timeserieslimits"
+	"github.com/VictoriaMetrics/metrics"
 	"github.com/cespare/xxhash/v2"
 )
 
@@ -136,7 +143,10 @@ func (ctx *InsertCtx) WriteDataPointExt(storageNodeIdx int, metricNameRaw []byte
 	snb := ctx.snb
 	sn := snb.sns[storageNodeIdx]
 	bufNew := storage.MarshalMetricRow(br.buf, metricNameRaw, timestamp, value)
-	if len(bufNew) >= maxBufSizePerStorageNode {
+	if len(bufNew) >= sn.maxBufSizePerStorageNode() {
+
+		// TODO:
+
 		// Send buf to sn, since it is too big.
 		if err := br.pushTo(snb, sn); err != nil {
 			return err
@@ -149,20 +159,111 @@ func (ctx *InsertCtx) WriteDataPointExt(storageNodeIdx int, metricNameRaw []byte
 	return nil
 }
 
+var maxCap atomic.Int64
+var usedCap atomic.Int64
+
+var _ = metrics.NewGauge(`vm_rpc_max_capacity`, func() float64 {
+	return float64(maxCap.Load())
+})
+var _ = metrics.NewGauge(`vm_rpc_used_capacity`, func() float64 {
+	return float64(usedCap.Load())
+})
+
+var maxIncomingQueueDuration = time.Second * 12
+
+func ApproachingMaxCapacity() bool {
+	usedCapVal := usedCap.Load()
+	maxCapVal := maxCap.Load()
+
+	return float64(usedCapVal)/float64(maxCapVal) >= 0.8
+}
+
+func (ctx *InsertCtx) reserveCapacity() bool {
+	bufLen := int64(0)
+	for i := range ctx.bufRowss {
+		br := &ctx.bufRowss[i]
+		bufLen += int64(len(br.buf))
+	}
+
+	usedCapVal := usedCap.Load()
+	maxCapVal := maxCap.Load()
+
+	if usedCapVal+bufLen > maxCapVal {
+		return false
+	}
+
+	usedCap.Add(bufLen)
+	return true
+}
+
+func releaseCapacity(size int) {
+	usedCap.Add(-int64(size))
+}
+
+func updateMaxQueueCap(sns []*storageNode) {
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+
+	for range t.C {
+		sumCapacity := float64(0)
+		for i := range sns {
+			sn := sns[i]
+			avgMPS := sn.outAvgBytesPerSecond.Value()
+			if avgMPS == 0 {
+				avgMPS = float64(consts.MaxInsertPacketSizeForVMStorage)
+			}
+
+			sumCapacity += avgMPS * maxIncomingQueueDuration.Seconds()
+		}
+		avgCapacity := sumCapacity / float64(len(sns))
+		nextMaxCap := avgCapacity * float64(len(sns))
+
+		if nextMaxCap > float64(memory.Allowed())*0.8 {
+			nextMaxCap = float64(memory.Allowed()) * 0.8
+		}
+
+		maxCap.Store(int64(nextMaxCap))
+	}
+}
+
 // FlushBufs flushes ctx bufs to remote storage nodes.
 func (ctx *InsertCtx) FlushBufs() error {
 	var firstErr error
+	var firstErrMu sync.Mutex
 	snb := ctx.snb
 	sns := snb.sns
+
+	if *BackpressureEnabled {
+		if !ctx.reserveCapacity() {
+			if *BackpressureEnabled {
+				return &httpserver.ErrorWithStatusCode{
+					Err:        fmt.Errorf("storages capacity saturated"),
+					StatusCode: http.StatusServiceUnavailable,
+				}
+			}
+		}
+	}
+
+	var wg sync.WaitGroup
 	for i := range ctx.bufRowss {
 		br := &ctx.bufRowss[i]
 		if len(br.buf) == 0 {
 			continue
 		}
-		if err := br.pushTo(snb, sns[i]); err != nil && firstErr == nil {
-			firstErr = err
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			if err := br.pushTo(snb, sns[i]); err != nil {
+				firstErrMu.Lock()
+				firstErr = errors.Join(firstErr, err)
+				firstErrMu.Unlock()
+			}
+		}()
 	}
+
+	wg.Wait()
+
 	return firstErr
 }
 

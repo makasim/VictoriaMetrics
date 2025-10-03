@@ -176,9 +176,10 @@ func Init() {
 		})
 	}
 
-	if *queues > maxQueues {
-		*queues = maxQueues
-	}
+	// TODO: revert
+	//if *queues > maxQueues {
+	//	*queues = maxQueues
+	//}
 	if *queues <= 0 {
 		*queues = 1
 	}
