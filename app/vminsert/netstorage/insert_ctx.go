@@ -144,9 +144,6 @@ func (ctx *InsertCtx) WriteDataPointExt(storageNodeIdx int, metricNameRaw []byte
 	sn := snb.sns[storageNodeIdx]
 	bufNew := storage.MarshalMetricRow(br.buf, metricNameRaw, timestamp, value)
 	if len(bufNew) >= sn.maxBufSizePerStorageNode() {
-
-		// TODO:
-
 		// Send buf to sn, since it is too big.
 		if err := br.pushTo(snb, sn); err != nil {
 			return err
