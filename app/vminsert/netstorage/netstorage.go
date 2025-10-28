@@ -321,9 +321,7 @@ func (sn *storageNode) sendBufRowsNonblocking(br *bufRows) bool {
 	if err == nil {
 		releaseCapacity(len(br.buf))
 		sn.outTotalBytes.Add(int64(len(br.buf)))
-		sn.outTotalDur.Add(int64(duration))
-		//log.Printf("SENT-TO-STORE %s: %.2fMb in %s", sn.dialer.Addr(), float64(len(br.buf))/1e6, duration)
-		//sn.outAvgDur.Add(duration.Seconds())
+		sn.outAvgDur.Add(duration.Seconds())
 
 		// Successfully sent buf to bc.
 		sn.rowsSent.Add(br.rows)
@@ -450,8 +448,6 @@ type storageNode struct {
 	sendDurationSeconds *metrics.FloatCounter
 
 	outAvgDur            ewma.MovingAverage
-	outAvgDur2           atomic.Int64
-	outTotalDur          atomic.Int64
 	outAvgBytesPerSecond ewma.MovingAverage
 	outTotalBytes        atomic.Int64
 	maxCapacityBytes     atomic.Int64
@@ -460,18 +456,6 @@ type storageNode struct {
 // capacity returns the max capacity in Bytes
 func (sn *storageNode) capacity() float64 {
 	return float64(sn.maxBufSizePerStorageNode())
-
-	//avgDur := sn.outAvgDur.Value()
-	//if avgDur == 0 {
-	//	return float64(maxBufSizePerStorageNode)
-	//}
-	//avgBPS := sn.outAvgBytesPerSecond.Value()
-	//if avgBPS == 0 {
-	//	return float64(maxBufSizePerStorageNode)
-	//}
-	//
-	//return avgBPS
-	//return avgRPS * avgDur
 }
 
 func (sn *storageNode) maxBufSizePerStorageNode() int {
@@ -594,8 +578,7 @@ func initStorageNodes(unsortedAddrs []string, hashSeed uint64) *storageNodesBuck
 			})
 
 			_ = ms.NewGauge(fmt.Sprintf(`vm_rpc_avg_dur{name="vminsert", addr=%q}`, addr), func() float64 {
-				//return sn.outAvgDur.Value()
-				return time.Duration(sn.outAvgDur2.Load()).Seconds()
+				return sn.outAvgDur.Value()
 			})
 			_ = ms.NewGauge(fmt.Sprintf(`vm_rpc_avg_rps{name="vminsert", addr=%q}`, addr), func() float64 {
 				return sn.outAvgBytesPerSecond.Value()
@@ -612,8 +595,7 @@ func initStorageNodes(unsortedAddrs []string, hashSeed uint64) *storageNodesBuck
 		t := time.NewTicker(time.Second * 10)
 		for range t.C {
 			for _, sn := range sns {
-				//avgDur := sn.outAvgDur.Value()
-				avgDur := time.Duration(sn.outAvgDur2.Load()).Seconds()
+				avgDur := sn.outAvgDur.Value()
 				if avgDur == 0 {
 					continue
 				}
@@ -669,11 +651,7 @@ func initStorageNodes(unsortedAddrs []string, hashSeed uint64) *storageNodesBuck
 			t := time.NewTicker(time.Second)
 			defer t.Stop()
 
-			t1 := time.NewTicker(time.Second * 5)
-			defer t1.Stop()
-
 			prevTotalBytes := sn.outTotalBytes.Load()
-			prevTotalDur := sn.outTotalDur.Load()
 			for {
 				select {
 				case <-stopCh:
@@ -682,12 +660,6 @@ func initStorageNodes(unsortedAddrs []string, hashSeed uint64) *storageNodesBuck
 					currTotalBytes := sn.outTotalBytes.Load()
 					sn.outAvgBytesPerSecond.Add(float64(currTotalBytes - prevTotalBytes))
 					prevTotalBytes = currTotalBytes
-
-				case <-t1.C:
-					currTotalDur := sn.outTotalDur.Load()
-					sn.outAvgDur.Add(time.Duration(currTotalDur-prevTotalDur).Seconds() / 5)
-					sn.outAvgDur2.Store((currTotalDur - prevTotalDur) / 5)
-					prevTotalDur = currTotalDur
 				}
 			}
 		}(sn)
@@ -841,17 +813,9 @@ func rerouteRowsToFreeStorageNodes(snb *storageNodesBucket, snSource *storageNod
 
 func (sn *storageNode) rerouteRowsToNextIfHasCapacity(snb *storageNodesBucket, buf []byte, rows int) error {
 	sns := snb.sns
-	//ownAvgDur := sn.outAvgDur.Value()
-	//
-	//// we don't have enough data to make good rerouting decision
-	//if ownAvgDur == 0 {
-	//	sn.sendBufMayBlock(buf)
-	//	return nil
-	//}
-
+	snIdx := -1
 	snCap := sn.capacity()
 
-	snIdx := -1
 	// Check if sn is the slowest among storage nodes
 	// also find snIdx
 	for i, otherSn := range sns {
