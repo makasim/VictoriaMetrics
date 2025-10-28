@@ -12,7 +12,6 @@ import (
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/relabel"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/bytesutil"
-	"github.com/VictoriaMetrics/VictoriaMetrics/lib/consts"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/encoding"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/httpserver"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/memory"
@@ -156,11 +155,11 @@ func (ctx *InsertCtx) WriteDataPointExt(storageNodeIdx int, metricNameRaw []byte
 	return nil
 }
 
-var maxCap atomic.Int64
+var maxClusterCapacityBytes atomic.Int64
 var usedCap atomic.Int64
 
 var _ = metrics.NewGauge(`vm_rpc_max_capacity`, func() float64 {
-	return float64(maxCap.Load())
+	return float64(maxClusterCapacityBytes.Load())
 })
 var _ = metrics.NewGauge(`vm_rpc_used_capacity`, func() float64 {
 	return float64(usedCap.Load())
@@ -170,7 +169,7 @@ var maxIncomingQueueDuration = time.Second * 12
 
 func ApproachingMaxCapacity() bool {
 	usedCapVal := usedCap.Load()
-	maxCapVal := maxCap.Load()
+	maxCapVal := maxClusterCapacityBytes.Load()
 
 	return float64(usedCapVal)/float64(maxCapVal) >= 0.8
 }
@@ -183,7 +182,7 @@ func (ctx *InsertCtx) reserveCapacity() bool {
 	}
 
 	usedCapVal := usedCap.Load()
-	maxCapVal := maxCap.Load()
+	maxCapVal := maxClusterCapacityBytes.Load()
 
 	if usedCapVal+bufLen > maxCapVal {
 		return false
@@ -205,12 +204,7 @@ func updateMaxQueueCap(sns []*storageNode) {
 		sumCapacity := float64(0)
 		for i := range sns {
 			sn := sns[i]
-			avgMPS := sn.outAvgBytesPerSecond.Value()
-			if avgMPS == 0 {
-				avgMPS = float64(consts.MaxInsertPacketSizeForVMStorage)
-			}
-
-			sumCapacity += avgMPS * maxIncomingQueueDuration.Seconds()
+			sumCapacity += sn.capacity() * maxIncomingQueueDuration.Seconds()
 		}
 		avgCapacity := sumCapacity / float64(len(sns))
 		nextMaxCap := avgCapacity * float64(len(sns))
@@ -219,7 +213,7 @@ func updateMaxQueueCap(sns []*storageNode) {
 			nextMaxCap = float64(memory.Allowed()) * 0.8
 		}
 
-		maxCap.Store(int64(nextMaxCap))
+		maxClusterCapacityBytes.Store(int64(nextMaxCap))
 	}
 }
 

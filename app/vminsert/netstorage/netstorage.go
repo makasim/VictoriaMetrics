@@ -613,8 +613,11 @@ func initStorageNodes(unsortedAddrs []string, hashSeed uint64) *storageNodesBuck
 				if newCap < 2*1024*1024 {
 					newCap = 2 * 1024 * 1024
 				}
-				if newCap > consts.MaxInsertPacketSizeForVMInsert {
-					newCap = consts.MaxInsertPacketSizeForVMInsert
+				//if newCap > consts.MaxInsertPacketSizeForVMInsert {
+				//	newCap = consts.MaxInsertPacketSizeForVMInsert
+				//}
+				if newCap > 100*1024*1024 {
+					newCap = 100 * 1024 * 1024
 				}
 
 				sn.maxCapacityBytes.Store(newCap)
