@@ -165,25 +165,25 @@ func (sn *storageNode) run(snb *storageNodesBucket, snIdx int) {
 	}()
 	defer sn.readOnlyCheckerWG.Wait()
 
-	//d := timeutil.AddJitterToDuration(time.Millisecond * 200)
-	ticker := time.NewTicker(time.Second)
+	d := timeutil.AddJitterToDuration(time.Millisecond * 200)
+	ticker := time.NewTicker(d)
 	defer ticker.Stop()
 	var br bufRows
 	brLastResetTime := fasttime.UnixTimestamp()
 	mustStop := false
 	for !mustStop {
-		//sn.brLock.Lock()
-		//waitForNewData := len(sn.br.buf) <= 2*1024*1024
-		//sn.brLock.Unlock()
-		//if waitForNewData {
-		select {
-		case <-sn.stopCh:
-			mustStop = true
-			// Make sure the br.buf is flushed last time before returning
-			// in order to send the remaining bits of data.
-		case <-ticker.C:
+		sn.brLock.Lock()
+		waitForNewData := len(sn.br.buf) <= 2*1024*1024
+		sn.brLock.Unlock()
+		if waitForNewData {
+			select {
+			case <-sn.stopCh:
+				mustStop = true
+				// Make sure the br.buf is flushed last time before returning
+				// in order to send the remaining bits of data.
+			case <-ticker.C:
+			}
 		}
-		//}
 
 		sn.brLock.Lock()
 		sn.br, br = br, sn.br

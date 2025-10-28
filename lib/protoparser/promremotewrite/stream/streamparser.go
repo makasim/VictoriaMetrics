@@ -6,7 +6,6 @@ import (
 	"io"
 	"sync"
 
-	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/netstorage"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/bytesutil"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/encoding/zstd"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/fasttime"
@@ -92,9 +91,9 @@ func Parse(r io.Reader, isVMRemoteWrite bool, callback func(tss []prompb.TimeSer
 	mms := wr.Metadata
 	metadataRead.Add(len(mms))
 
-	if *netstorage.BackpressureEnabled {
-		wcr.DecConcurrency()
-	}
+	//if *netstorage.BackpressureEnabled {
+	//	wcr.DecConcurrency()
+	//}
 
 	if err := callback(tss, mms); err != nil {
 		return fmt.Errorf("error when processing imported data: %w", err)
