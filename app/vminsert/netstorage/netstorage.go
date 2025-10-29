@@ -319,7 +319,9 @@ func (sn *storageNode) sendBufRowsNonblocking(br *bufRows) bool {
 	duration := time.Since(startTime)
 	sn.sendDurationSeconds.Add(duration.Seconds())
 	if err == nil {
-		releaseCapacity(len(br.buf))
+		if *BackpressureEnabled {
+			releaseCapacity(len(br.buf))
+		}
 		sn.outTotalBytes.Add(int64(len(br.buf)))
 		sn.outAvgDur.Add(duration.Seconds())
 
@@ -591,39 +593,38 @@ func initStorageNodes(unsortedAddrs []string, hashSeed uint64) *storageNodesBuck
 		sns = append(sns, sn)
 	}
 
-	go func() {
-		t := time.NewTicker(time.Second * 10)
-		for range t.C {
-			for _, sn := range sns {
-				avgDur := sn.outAvgDur.Value()
-				if avgDur == 0 {
-					continue
-				}
+	if *BackpressureEnabled {
+		go func() {
+			t := time.NewTicker(time.Second * 10)
+			for range t.C {
+				for _, sn := range sns {
+					avgDur := sn.outAvgDur.Value()
+					if avgDur == 0 {
+						continue
+					}
 
-				newCap := sn.maxCapacityBytes.Load()
-				if avgDur < 0.8 {
-					// increase 4%
-					newCap = int64(float64(newCap) * 1.04)
-				} else if avgDur >= 1 {
+					newCap := sn.maxCapacityBytes.Load()
+					if avgDur < 0.7 {
+						// increase 4%
+						newCap = int64(float64(newCap) * 1.04)
+					} else if avgDur >= 0.8 {
 
-					// decrease 12%
-					newCap = int64(float64(newCap) * 0.88)
-				}
+						// decrease 12%
+						newCap = int64(float64(newCap) * 0.88)
+					}
 
-				if newCap < 2*1024*1024 {
-					newCap = 2 * 1024 * 1024
-				}
-				//if newCap > consts.MaxInsertPacketSizeForVMInsert {
-				//	newCap = consts.MaxInsertPacketSizeForVMInsert
-				//}
-				if newCap > 100*1024*1024 {
-					newCap = 100 * 1024 * 1024
-				}
+					if newCap < 2*1024*1024 {
+						newCap = 2 * 1024 * 1024
+					}
+					if newCap > consts.MaxInsertPacketSizeForVMInsert {
+						newCap = consts.MaxInsertPacketSizeForVMInsert
+					}
 
-				sn.maxCapacityBytes.Store(newCap)
+					sn.maxCapacityBytes.Store(newCap)
+				}
 			}
-		}
-	}()
+		}()
+	}
 	go updateMaxQueueCap(sns)
 
 	maxBufSizePerStorageNode = memory.Allowed() / 8 / len(sns)

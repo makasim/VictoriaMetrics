@@ -170,6 +170,9 @@ var maxIncomingQueueDuration = time.Second * 12
 func ApproachingMaxCapacity() bool {
 	usedCapVal := usedCap.Load()
 	maxCapVal := maxClusterCapacityBytes.Load()
+	if maxCapVal == 0 {
+		return false
+	}
 
 	return float64(usedCapVal)/float64(maxCapVal) >= 0.8
 }
@@ -201,13 +204,17 @@ func updateMaxQueueCap(sns []*storageNode) {
 	defer t.Stop()
 
 	for range t.C {
-		sumCapacity := float64(0)
+		//sumCapacity := float64(0)
+		minCapacity := sns[0].capacity()
 		for i := range sns {
 			sn := sns[i]
-			sumCapacity += sn.capacity() * maxIncomingQueueDuration.Seconds()
+			minCapacity = min(sn.capacity(), minCapacity)
+			//sumCapacity += sn.capacity() * maxIncomingQueueDuration.Seconds()
 		}
-		avgCapacity := sumCapacity / float64(len(sns))
-		nextMaxCap := avgCapacity * float64(len(sns))
+		nextMaxCap := minCapacity * maxIncomingQueueDuration.Seconds()
+
+		//avgCapacity := sumCapacity / float64(len(sns))
+		//nextMaxCap := avgCapacity * float64(len(sns))
 
 		if nextMaxCap > float64(memory.Allowed())*0.8 {
 			nextMaxCap = float64(memory.Allowed()) * 0.8
