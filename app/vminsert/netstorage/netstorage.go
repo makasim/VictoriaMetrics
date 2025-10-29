@@ -10,9 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/VictoriaMetrics/metrics"
-	"github.com/cespare/xxhash/v2"
-
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/consts"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/fasttime"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/handshake"
@@ -23,6 +20,9 @@ import (
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/timerpool"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/timeutil"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/vminsertapi"
+	"github.com/VictoriaMetrics/metrics"
+	"github.com/VividCortex/ewma"
+	"github.com/cespare/xxhash/v2"
 )
 
 var (
@@ -31,6 +31,7 @@ var (
 		"Note that vmselect must run with -dedup.minScrapeInterval=1ms for data de-duplication when replicationFactor is greater than 1. "+
 		"Higher values for -dedup.minScrapeInterval at vmselect is OK")
 	disableRerouting      = flag.Bool("disableRerouting", true, "Whether to disable re-routing when some of vmstorage nodes accept incoming data at slower speed compared to other storage nodes. Disabled re-routing limits the ingestion rate by the slowest vmstorage node. On the other side, disabled re-routing minimizes the number of active time series in the cluster during rolling restarts and during spikes in series churn rate. See also -disableReroutingOnUnavailable and -dropSamplesOnOverload")
+	capacityRerouting     = flag.Bool("capacityRerouting", false, "")
 	dropSamplesOnOverload = flag.Bool("dropSamplesOnOverload", false, "Whether to drop incoming samples if the destination vmstorage node is overloaded and/or unavailable. This prioritizes cluster availability over consistency, e.g. the cluster continues accepting all the ingested samples, but some of them may be dropped if vmstorage nodes are temporarily unavailable and/or overloaded. The drop of samples happens before the replication, so it's not recommended to use this flag with -replicationFactor enabled.")
 	vmstorageDialTimeout  = flag.Duration("vmstorageDialTimeout", 3*time.Second, "Timeout for establishing RPC connections from vminsert to vmstorage. "+
 		"See also -vmstorageUserTimeout")
@@ -44,6 +45,10 @@ var (
 		"during rolling restarts and during spikes in series churn rate. "+
 		"See also -disableRerouting")
 )
+
+var BackpressureEnabled = flag.Bool(`backpressure`, false, ``)
+
+var errStorageReadOnly = errors.New("storage node is read only")
 
 func (sn *storageNode) isReady() bool {
 	return !sn.isBroken.Load() && !sn.isReadOnly.Load()
@@ -116,7 +121,7 @@ again:
 		return nil
 	}
 
-	if len(sn.br.buf)+len(buf) <= maxBufSizePerStorageNode {
+	if len(sn.br.buf)+len(buf) <= sn.maxBufSizePerStorageNode() {
 		// Fast path: the buf contents fits sn.buf.
 		sn.br.buf = append(sn.br.buf, buf...)
 		sn.br.rows += rows
@@ -128,7 +133,13 @@ again:
 		sn.brCond.Wait()
 		goto again
 	}
+
 	sn.brLock.Unlock()
+
+	if *capacityRerouting {
+		return sn.rerouteRowsToNextIfHasCapacity(snb, buf, rows)
+	}
+
 	rowsProcessed, err := rerouteRowsToFreeStorageNodes(snb, sn, buf)
 	rows -= rowsProcessed
 	if err != nil {
@@ -162,7 +173,7 @@ func (sn *storageNode) run(snb *storageNodesBucket, snIdx int) {
 	mustStop := false
 	for !mustStop {
 		sn.brLock.Lock()
-		waitForNewData := len(sn.br.buf) == 0
+		waitForNewData := len(sn.br.buf) <= 2*1024*1024
 		sn.brLock.Unlock()
 		if waitForNewData {
 			select {
@@ -297,6 +308,7 @@ func (sn *storageNode) sendBufRowsNonblocking(br *bufRows) bool {
 		// sn.dial() should be called by sn.checkHealth() on unsuccessful call to sendBufToReplicasNonblocking().
 		return false
 	}
+
 	startTime := time.Now()
 	var err error
 	if sn.bc.IsLegacy {
@@ -307,6 +319,12 @@ func (sn *storageNode) sendBufRowsNonblocking(br *bufRows) bool {
 	duration := time.Since(startTime)
 	sn.sendDurationSeconds.Add(duration.Seconds())
 	if err == nil {
+		if *BackpressureEnabled {
+			releaseCapacity(len(br.buf))
+		}
+		sn.outTotalBytes.Add(int64(len(br.buf)))
+		sn.outAvgDur.Add(duration.Seconds())
+
 		// Successfully sent buf to bc.
 		sn.rowsSent.Add(br.rows)
 		return true
@@ -430,6 +448,24 @@ type storageNode struct {
 	// The total duration spent for sending data to vmstorage node.
 	// This metric is useful for determining the saturation of vminsert->vmstorage link.
 	sendDurationSeconds *metrics.FloatCounter
+
+	outAvgDur            ewma.MovingAverage
+	outAvgBytesPerSecond ewma.MovingAverage
+	outTotalBytes        atomic.Int64
+	maxCapacityBytes     atomic.Int64
+}
+
+// capacity returns the max capacity in Bytes
+func (sn *storageNode) capacity() float64 {
+	return float64(sn.maxBufSizePerStorageNode())
+}
+
+func (sn *storageNode) maxBufSizePerStorageNode() int {
+	if !*BackpressureEnabled {
+		return maxBufSizePerStorageNode
+	}
+
+	return int(sn.maxCapacityBytes.Load())
 }
 
 type storageNodesBucket struct {
@@ -509,7 +545,12 @@ func initStorageNodes(unsortedAddrs []string, hashSeed uint64) *storageNodesBuck
 			rowsReroutedFromHere:  ms.NewCounter(fmt.Sprintf(`vm_rpc_rows_rerouted_from_here_total{name="vminsert", addr=%q, rpc_call=%q}`, addr, rpcCall.Name)),
 			rowsReroutedToHere:    ms.NewCounter(fmt.Sprintf(`vm_rpc_rows_rerouted_to_here_total{name="vminsert", addr=%q, rpc_call=%q}`, addr, rpcCall.Name)),
 			sendDurationSeconds:   ms.NewFloatCounter(fmt.Sprintf(`vm_rpc_send_duration_seconds_total{name="vminsert", addr=%q, rpc_call=%q}`, addr, rpcCall.Name)),
+
+			outAvgDur:            ewma.NewMovingAverage(60),
+			outAvgBytesPerSecond: ewma.NewMovingAverage(60),
+			maxCapacityBytes:     atomic.Int64{},
 		}
+		sn.maxCapacityBytes.Store(consts.MaxInsertPacketSizeForVMInsert)
 		sn.brCond = sync.NewCond(&sn.brLock)
 		_ = ms.NewGauge(fmt.Sprintf(`vm_rpc_rows_pending{name="vminsert", addr=%q, rpc_call=%q}`, addr, rpcCall.Name), func() float64 {
 			sn.brLock.Lock()
@@ -538,9 +579,53 @@ func initStorageNodes(unsortedAddrs []string, hashSeed uint64) *storageNodesBuck
 				return 0
 			})
 
+			_ = ms.NewGauge(fmt.Sprintf(`vm_rpc_avg_dur{name="vminsert", addr=%q}`, addr), func() float64 {
+				return sn.outAvgDur.Value()
+			})
+			_ = ms.NewGauge(fmt.Sprintf(`vm_rpc_avg_rps{name="vminsert", addr=%q}`, addr), func() float64 {
+				return sn.outAvgBytesPerSecond.Value()
+			})
+			_ = ms.NewGauge(fmt.Sprintf(`maxCapacityBytes{name="vminsert", addr=%q}`, addr), func() float64 {
+				return float64(sn.maxCapacityBytes.Load())
+			})
 		}
+
 		sns = append(sns, sn)
 	}
+
+	if *BackpressureEnabled {
+		go func() {
+			t := time.NewTicker(time.Second * 10)
+			for range t.C {
+				for _, sn := range sns {
+					avgDur := sn.outAvgDur.Value()
+					if avgDur == 0 {
+						continue
+					}
+
+					newCap := sn.maxCapacityBytes.Load()
+					if avgDur < 0.7 {
+						// increase 4%
+						newCap = int64(float64(newCap) * 1.04)
+					} else if avgDur >= 0.8 {
+
+						// decrease 12%
+						newCap = int64(float64(newCap) * 0.88)
+					}
+
+					if newCap < 2*1024*1024 {
+						newCap = 2 * 1024 * 1024
+					}
+					if newCap > consts.MaxInsertPacketSizeForVMInsert {
+						newCap = consts.MaxInsertPacketSizeForVMInsert
+					}
+
+					sn.maxCapacityBytes.Store(newCap)
+				}
+			}
+		}()
+	}
+	go updateMaxQueueCap(sns)
 
 	maxBufSizePerStorageNode = memory.Allowed() / 8 / len(sns)
 	if maxBufSizePerStorageNode > consts.MaxInsertPacketSizeForVMInsert {
@@ -563,6 +648,25 @@ func initStorageNodes(unsortedAddrs []string, hashSeed uint64) *storageNodesBuck
 			sn.run(snb, idx)
 			wg.Done()
 		}(sn, idx)
+
+		wg.Add(1)
+		go func(sn *storageNode) {
+			defer wg.Done()
+			t := time.NewTicker(time.Second)
+			defer t.Stop()
+
+			prevTotalBytes := sn.outTotalBytes.Load()
+			for {
+				select {
+				case <-stopCh:
+					return
+				case <-t.C:
+					currTotalBytes := sn.outTotalBytes.Load()
+					sn.outAvgBytesPerSecond.Add(float64(currTotalBytes - prevTotalBytes))
+					prevTotalBytes = currTotalBytes
+				}
+			}
+		}(sn)
 	}
 
 	return snb
@@ -711,6 +815,50 @@ func rerouteRowsToFreeStorageNodes(snb *storageNodesBucket, snSource *storageNod
 	return rowsProcessed, nil
 }
 
+func (sn *storageNode) rerouteRowsToNextIfHasCapacity(snb *storageNodesBucket, buf []byte, rows int) error {
+	sns := snb.sns
+	snIdx := -1
+	snCap := sn.capacity()
+
+	// Check if sn is the slowest among storage nodes
+	// also find snIdx
+	for i, otherSn := range sns {
+		if otherSn == sn {
+			snIdx = i
+			continue
+		}
+
+		// not the slowest
+		if snCap > otherSn.capacity() {
+			sn.sendBufMayBlock(buf)
+			return nil
+		}
+	}
+
+	if snIdx == -1 {
+		logger.Panicf("BUG: cannot find source node %s in sns", sn.dialer.Addr())
+	}
+
+	// Get next storage node
+	nextIdx := (snIdx + 1) % len(sns)
+	nextSN := sns[nextIdx]
+
+	nextSNCap := nextSN.capacity()
+
+	if nextSN.isReady() {
+		if nextSNCap > snCap*2 {
+			if nextSN.sendBufMayBlock(buf) {
+				sn.rowsReroutedFromHere.Add(rows)
+				nextSN.rowsReroutedToHere.Add(rows)
+				return nil
+			}
+		}
+	}
+
+	sn.sendBufMayBlock(buf)
+	return nil
+}
+
 func getNotReadyStorageNodeIdxsBlocking(snb *storageNodesBucket, dst []int) []int {
 	dst = getNotReadyStorageNodeIdxs(snb, dst[:0], nil)
 	sns := snb.sns
@@ -758,7 +906,7 @@ func (sn *storageNode) trySendBuf(buf []byte, rows int) bool {
 
 	sent := false
 	sn.brLock.Lock()
-	if sn.isReady() && len(sn.br.buf)+len(buf) <= maxBufSizePerStorageNode {
+	if sn.isReady() && len(sn.br.buf)+len(buf) <= sn.maxBufSizePerStorageNode() {
 		sn.br.buf = append(sn.br.buf, buf...)
 		sn.br.rows += rows
 		sent = true
@@ -769,7 +917,7 @@ func (sn *storageNode) trySendBuf(buf []byte, rows int) bool {
 
 func (sn *storageNode) sendBufMayBlock(buf []byte) bool {
 	sn.brLock.Lock()
-	for len(sn.br.buf)+len(buf) > maxBufSizePerStorageNode {
+	for len(sn.br.buf)+len(buf) > sn.maxBufSizePerStorageNode() {
 		select {
 		case <-sn.stopCh:
 			sn.brLock.Unlock()

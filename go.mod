@@ -2,16 +2,20 @@ module github.com/VictoriaMetrics/VictoriaMetrics
 
 go 1.25.3
 
+replace github.com/VictoriaMetrics/metrics => /Users/makasim/projects/VictoriaMetrics/metrics
+
 require (
 	cloud.google.com/go/storage v1.57.0
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.19.1
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.0
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.2
+	github.com/HdrHistogram/hdrhistogram-go v1.1.2
 	github.com/VictoriaMetrics/VictoriaLogs v1.36.2-0.20251008164716-21c0fb3de84d
 	github.com/VictoriaMetrics/easyproto v0.1.4
 	github.com/VictoriaMetrics/fastcache v1.13.0
 	github.com/VictoriaMetrics/metrics v1.40.2
 	github.com/VictoriaMetrics/metricsql v0.84.8
+	github.com/VividCortex/ewma v1.2.0
 	github.com/aws/aws-sdk-go-v2 v1.39.2
 	github.com/aws/aws-sdk-go-v2/config v1.31.12
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.19.12
@@ -25,6 +29,7 @@ require (
 	github.com/googleapis/gax-go/v2 v2.15.0
 	github.com/influxdata/influxdb v1.12.2
 	github.com/klauspost/compress v1.18.0
+	github.com/makasim/backpressure v0.0.0-20251020092921-432d0da5e85d
 	github.com/prometheus/prometheus v0.303.1
 	github.com/urfave/cli/v2 v2.27.7
 	github.com/valyala/fastjson v1.6.4
@@ -53,7 +58,6 @@ require (
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.30.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.54.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.54.0 // indirect
-	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.1 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.16 // indirect

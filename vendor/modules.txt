@@ -132,6 +132,9 @@ github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric
 # github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.54.0
 ## explicit; go 1.24.0
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping
+# github.com/HdrHistogram/hdrhistogram-go v1.1.2
+## explicit; go 1.14
+github.com/HdrHistogram/hdrhistogram-go
 # github.com/VictoriaMetrics/VictoriaLogs v1.36.2-0.20251008164716-21c0fb3de84d
 ## explicit; go 1.25.2
 github.com/VictoriaMetrics/VictoriaLogs/lib/logstorage
@@ -142,7 +145,7 @@ github.com/VictoriaMetrics/easyproto
 # github.com/VictoriaMetrics/fastcache v1.13.0
 ## explicit; go 1.24.0
 github.com/VictoriaMetrics/fastcache
-# github.com/VictoriaMetrics/metrics v1.40.2
+# github.com/VictoriaMetrics/metrics v1.40.2 => /Users/makasim/projects/VictoriaMetrics/metrics
 ## explicit; go 1.18
 github.com/VictoriaMetrics/metrics
 # github.com/VictoriaMetrics/metricsql v0.84.8
@@ -510,6 +513,9 @@ github.com/knadh/koanf/v2
 ## explicit; go 1.11
 github.com/kylelemons/godebug/diff
 github.com/kylelemons/godebug/pretty
+# github.com/makasim/backpressure v0.0.0-20251020092921-432d0da5e85d
+## explicit; go 1.25.2
+github.com/makasim/backpressure
 # github.com/mattn/go-colorable v0.1.14
 ## explicit; go 1.18
 github.com/mattn/go-colorable
@@ -1163,3 +1169,4 @@ k8s.io/klog/v2/internal/sloghandler
 # k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
 ## explicit; go 1.18
 k8s.io/utils/clock
+# github.com/VictoriaMetrics/metrics => /Users/makasim/projects/VictoriaMetrics/metrics

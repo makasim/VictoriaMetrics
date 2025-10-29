@@ -1,11 +1,13 @@
 package promremotewrite
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/netstorage"
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/relabel"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/httpserver"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/prompb"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/protoparser/promremotewrite/stream"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/protoparser/protoparserutil"
@@ -13,6 +15,10 @@ import (
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/tenantmetrics"
 	"github.com/VictoriaMetrics/metrics"
 )
+
+var okTotal = metrics.NewCounter(`vm_rows_inserted_ok_total`)
+var deniedTotal = metrics.NewCounter(`vm_rows_inserted_denied_total`)
+var congestedTotal = metrics.NewCounter(`vm_rows_inserted_congested_total`)
 
 var (
 	rowsInserted       = metrics.NewCounter(`vm_rows_inserted_total{type="promremotewrite"}`)
@@ -22,14 +28,40 @@ var (
 
 // InsertHandler processes remote write for prometheus.
 func InsertHandler(at *auth.Token, req *http.Request) error {
-	extraLabels, err := protoparserutil.GetExtraLabels(req)
-	if err != nil {
-		return err
+	if *netstorage.BackpressureEnabled {
+		if netstorage.ApproachingMaxCapacity() {
+			deniedTotal.Inc()
+			return &httpserver.ErrorWithStatusCode{
+				Err:        fmt.Errorf("cannot insert rows now - too many concurrent requests"),
+				StatusCode: http.StatusServiceUnavailable,
+			}
+		}
+	}
+
+	var err error
+
+	defer func() {
+		if *netstorage.BackpressureEnabled {
+			if err != nil {
+				congestedTotal.Inc()
+			}
+		}
+	}()
+
+	extraLabels, err1 := protoparserutil.GetExtraLabels(req)
+	if err1 != nil {
+		return err1
 	}
 	isVMRemoteWrite := req.Header.Get("Content-Encoding") == "zstd"
-	return stream.Parse(req.Body, isVMRemoteWrite, func(tss []prompb.TimeSeries, _ []prompb.MetricMetadata) error {
+	err = stream.Parse(req.Body, isVMRemoteWrite, func(tss []prompb.TimeSeries, _ []prompb.MetricMetadata) error {
 		return insertRows(at, tss, extraLabels)
 	})
+
+	if err == nil {
+		okTotal.Inc()
+	}
+
+	return err
 }
 
 func insertRows(at *auth.Token, timeseries []prompb.TimeSeries, extraLabels []prompb.Label) error {
